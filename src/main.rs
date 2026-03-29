@@ -21,12 +21,26 @@ struct DicomConfig {
 }
 
 impl DicomConfig {
-    // &self signifie "je lis la fiche mais je ne la modifie pas"
+    // config display method
     fn display(&self) {
         println!(
             "Connexion vers {}:{} avec l'AET '{}'",
             self.host, self.port, self.aet
         );
+    }
+}
+
+fn parse_port(input: &str) -> Result<u16, String> {
+    // Convert string port in number
+    match input.parse::<u16>() {
+        Ok(port) => {
+            if port == 0 {
+                Err(String::from("Le port 0 n'est pas valide"))
+            } else {
+                Ok(port)
+            }
+        }
+        Err(_) => Err(format!("'{}' n'est pas un numéro de port valide", input)),
     }
 }
 
@@ -47,4 +61,19 @@ fn main() {
 
     describe_mode(&mode_tcp);
     describe_mode(&mode_udp);
+
+    match parse_port("4242") {
+        Ok(port) => println!("Port valide : {}", port),
+        Err(msg) => println!("Erreur : {}", msg),
+    }
+
+    match parse_port("0") {
+        Ok(port) => println!("Port valide : {}", port),
+        Err(msg) => println!("Erreur : {}", msg),
+    }
+
+    match parse_port("abc") {
+        Ok(port) => println!("Port valide : {}", port),
+        Err(msg) => println!("Erreur : {}", msg),
+    }
 }
