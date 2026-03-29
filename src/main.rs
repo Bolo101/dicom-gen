@@ -1,3 +1,5 @@
+#![allow(unused)]
+
 enum TransportMode {
     Tcp,             // mode TCP classique
     Udp { ttl: u8 }, // mode UDP avec un TTL (u8 = entier entre 0 et 255)
@@ -44,6 +46,31 @@ fn parse_port(input: &str) -> Result<u16, String> {
     }
 }
 
+trait DicomMessage {
+    fn message_type(&self) -> &str; // retourne le nom du message
+    fn describe(&self); // affiche une description
+}
+
+struct CEcho {
+    called_aet: String, // recipient
+}
+
+impl DicomMessage for CEcho {
+    fn message_type(&self) -> &str {
+        "C-ECHO"
+    }
+
+    fn describe(&self) {
+        println!("[{}] Ping vers '{}'", self.message_type(), self.called_aet);
+    }
+}
+
+async fn send_echo(host: &str, port: u16) -> Result<(), String> {
+    println!("Envoi C-ECHO vers {}:{}...", host, port);
+    // ici viendrait la vraie logique réseau
+    Ok(()) // () signifie "rien" - comme void en C
+}
+
 fn main() {
     let config = DicomConfig {
         host: String::from("127.0.0.1"),
@@ -76,4 +103,9 @@ fn main() {
         Ok(port) => println!("Port valide : {}", port),
         Err(msg) => println!("Erreur : {}", msg),
     }
+
+    let echo = CEcho {
+        called_aet: String::from("ORTHANC"),
+    };
+    echo.describe();
 }
