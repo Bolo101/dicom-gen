@@ -1,4 +1,5 @@
 #![allow(unused)]
+mod cli;
 mod inspect;
 
 enum TransportMode {
@@ -74,42 +75,18 @@ async fn send_echo(host: &str, port: u16) -> Result<(), String> {
 
 #[tokio::main]
 async fn main() {
-    let config = DicomConfig {
-        host: String::from("127.0.0.1"),
-        port: 4242,
-        aet: String::from("DICOM-GEN"),
-    };
+    use clap::Parser;
 
-    println!("Hôte   : {}", config.host);
-    println!("Port   : {}", config.port);
-    println!("AET    : {}", config.aet);
-    config.display();
+    let args = cli::Cli::parse();
 
-    let mode_tcp = TransportMode::Tcp;
-    let mode_udp = TransportMode::Udp { ttl: 10 };
+    println!("=== DICOM-GEN ===");
+    println!("Mode     : {:?}", args.mode);
+    println!("Host     : {}:{}", args.host, args.port);
+    println!("Command  : {:?}", args.command);
+    println!("Calling  : {}", args.calling_aet);
+    println!("Called   : {}", args.called_aet);
 
-    describe_mode(&mode_tcp);
-    describe_mode(&mode_udp);
-
-    match parse_port("4242") {
-        Ok(port) => println!("Port valide : {}", port),
-        Err(msg) => println!("Erreur : {}", msg),
+    if let cli::TransportMode::Udp = args.mode {
+        println!("TTL      : {}", args.ttl);
     }
-
-    match parse_port("0") {
-        Ok(port) => println!("Port valide : {}", port),
-        Err(msg) => println!("Erreur : {}", msg),
-    }
-
-    match parse_port("abc") {
-        Ok(port) => println!("Port valide : {}", port),
-        Err(msg) => println!("Erreur : {}", msg),
-    }
-
-    let echo = CEcho {
-        called_aet: String::from("ORTHANC"),
-    };
-    echo.describe();
-
-    inspect::inspect_file("test.dcm");
 }
