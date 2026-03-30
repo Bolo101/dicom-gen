@@ -1,0 +1,53 @@
+use clap::{Parser, ValueEnum};
+
+// ValueEnum enables clap to convert a string as "tcp" in TransportMode::Tcp
+#[derive(Debug, Clone, ValueEnum)]
+pub enum TransportMode {
+    Tcp,
+    Udp,
+}
+
+#[derive(Debug, Clone, ValueEnum)]
+pub enum DicomCommand {
+    Echo,
+    Store,
+    Find,
+    Move,
+}
+
+// Parser generates arguments parsing
+#[derive(Debug, Parser)]
+#[command(
+    name = "dicom-gen",
+    about = "A DICOM traffic generator for debugging and development",
+    version = "0.1.0"
+)]
+pub struct Cli {
+    /// Transport mode : tcp or udp
+    #[arg(long, default_value = "tcp")]
+    pub mode: TransportMode,
+
+    /// Target host (IP or hostname)
+    #[arg(long, default_value = "127.0.0.1")]
+    pub host: String,
+
+    /// Target DICOM port
+    #[arg(long, default_value_t = 4242)]
+    pub port: u16,
+
+    /// DICOM command to send
+    #[arg(long, default_value = "echo")]
+    pub command: DicomCommand,
+
+    /// Called AET (the server's DICOM name)
+    #[arg(long, default_value = "ORTHANC")]
+    pub called_aet: String,
+
+    /// Calling AET (our DICOM name)
+    #[arg(long, default_value = "DICOM-GEN")]
+    pub calling_aet: String,
+
+    /// TTL for UDP mode (ignored in TCP mode)
+    #[arg(long, default_value_t = 64)]
+    pub ttl: u8,
+}
