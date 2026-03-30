@@ -1,4 +1,5 @@
 #![allow(unused)]
+mod inspect;
 
 enum TransportMode {
     Tcp,             // mode TCP classique
@@ -71,7 +72,8 @@ async fn send_echo(host: &str, port: u16) -> Result<(), String> {
     Ok(()) // () signifie "rien" - comme void en C
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let config = DicomConfig {
         host: String::from("127.0.0.1"),
         port: 4242,
@@ -108,4 +110,6 @@ fn main() {
         called_aet: String::from("ORTHANC"),
     };
     echo.describe();
+
+    inspect::inspect_file("test.dcm");
 }
