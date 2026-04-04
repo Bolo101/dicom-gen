@@ -246,6 +246,7 @@ name = "dicom-gen"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dicom-core",
  "dicom-dictionary-std",
  "dicom-object",
  "dicom-ul",
