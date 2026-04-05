@@ -47,7 +47,13 @@ async fn main() {
     match (&args.command, &args.mode) {
         // TCP C-ECHO
         (DicomCommand::Echo, TransportMode::Tcp) => {
-            match echo::send_echo(&args.host, args.port, &args.calling_aet, &args.called_aet) {
+            match echo::send_echo(
+                &args.host,
+                args.port,
+                &args.calling_aet,
+                &args.called_aet,
+                args.count,
+            ) {
                 Ok(()) => println!("[C-ECHO] Success ✓"),
                 Err(e) => println!("[C-ECHO] Failed : {}", e),
             }

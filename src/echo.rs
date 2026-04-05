@@ -119,92 +119,56 @@ pub fn send_echo(
     port: u16,
     calling_aet: &str,
     called_aet: &str,
+    count: u32, // number of C-ECHO requests to send
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("{}:{}", host, port);
-    println!("[C-ECHO] Connecting to {}...", addr);
 
-    // --- BLOCK 1 : Establish the DICOM Association ---
-    //
-    // ClientAssociationOptions is a builder pattern:
-    // we configure the options step by step, then call establish()
-    // which opens the TCP connection and performs the full
-    // A-ASSOCIATE-RQ / A-ASSOCIATE-AC handshake automatically.
-    //
-    // A Presentation Context declares:
-    // - what we want to do (Abstract Syntax = SOP Class UID)
-    // - how we encode it (Transfer Syntax)
-    //
-    let ts = EXPLICIT_VR_LE.to_string();
-
-    let association = ClientAssociationOptions::new()
-        .calling_ae_title(calling_aet)
-        .called_ae_title(called_aet)
-        .with_presentation_context(
-            VERIFICATION_SOP_CLASS, // Abstract Syntax : Verification (C-ECHO)
-            vec![&ts],              // Transfer Syntax : Explicit VR Little Endian
-        );
-
-    // dicom-ul 0.7.1 expects an AE address (&str) here,
-    // so we let dicom-ul open the TCP connection itself.
-    let mut association = association.establish(&addr)?;
-    println!("[C-ECHO] DICOM association established ✓");
-
-    // --- BLOCK 2 : Send the C-ECHO-RQ ---
-    //
-    // We retrieve the negotiated Presentation Context ID.
-    // This ID was assigned by the server during the association handshake.
-    // It must be included in every P-DATA PDU so the server knows
-    // which service the data belongs to.
-    //
-    let pc_id = association.presentation_contexts()[0].id;
-
-    // Build the raw bytes of the C-ECHO-RQ command set
-    let cmd_bytes = build_c_echo_rq(1);
-
-    // Wrap the command bytes in a P-DATA PDU and send it.
-    // PDataValue describes one fragment of data:
-    // - presentation_context_id : links this data to our negotiated service
-    // - value_type : Command (vs Dataset)
-    // - is_last : true = this is the last (and only) fragment
-    // - data : the raw command set bytes
-    //
-    association.send(&Pdu::PData {
-        data: vec![PDataValue {
-            presentation_context_id: pc_id,
-            value_type: PDataValueType::Command,
-            is_last: true,
-            data: cmd_bytes,
-        }],
-    })?;
-    println!("[C-ECHO] C-ECHO-RQ sent");
-
-    // --- BLOCK 3 : Read the C-ECHO-RSP ---
-    //
-    // We expect a P-DATA PDU back containing the C-ECHO-RSP command set.
-    // The response should contain Status = 0x0000 (Success).
-    // We use a match to handle both the expected case and any unexpected PDU.
-    //
-    match association.receive()? {
-        Pdu::PData { data } => {
-            println!(
-                "[C-ECHO] Response received ({} bytes) ✓",
-                data[0].data.len()
-            );
+    for i in 1..=count {
+        if count > 1 {
+            println!("[C-ECHO] Request #{}", i);
         }
-        pdu => {
-            // Any other PDU type (abort, release...) is unexpected here
-            println!("[C-ECHO] Unexpected PDU received: {:?}", pdu);
+        println!("[C-ECHO] Connecting to {}...", addr);
+
+        // Each C-ECHO opens its own association — this is the standard
+        // DICOM behaviour. One association per request.
+        let ts = EXPLICIT_VR_LE.to_string();
+
+        let options = ClientAssociationOptions::new()
+            .calling_ae_title(calling_aet)
+            .called_ae_title(called_aet)
+            .with_presentation_context(VERIFICATION_SOP_CLASS, vec![&ts]);
+
+        let mut association = options.establish(&addr)?;
+        println!("[C-ECHO] DICOM association established ✓");
+
+        let pc_id = association.presentation_contexts()[0].id;
+        let cmd_bytes = build_c_echo_rq(i as u16); // use loop index as message ID
+
+        association.send(&Pdu::PData {
+            data: vec![PDataValue {
+                presentation_context_id: pc_id,
+                value_type: PDataValueType::Command,
+                is_last: true,
+                data: cmd_bytes,
+            }],
+        })?;
+        println!("[C-ECHO] C-ECHO-RQ sent");
+
+        match association.receive()? {
+            Pdu::PData { data } => {
+                println!(
+                    "[C-ECHO] Response received ({} bytes) ✓",
+                    data[0].data.len()
+                );
+            }
+            pdu => {
+                println!("[C-ECHO] Unexpected PDU received: {:?}", pdu);
+            }
         }
+
+        association.release()?;
+        println!("[C-ECHO] Association released ✓");
     }
-
-    // --- BLOCK 4 : Release the association ---
-    //
-    // A-RELEASE-RQ is sent, server responds with A-RELEASE-RP,
-    // then the TCP connection is closed cleanly.
-    // This is handled automatically by release().
-    //
-    association.release()?;
-    println!("[C-ECHO] Association released ✓");
 
     Ok(())
 }
