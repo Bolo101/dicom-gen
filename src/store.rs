@@ -131,3 +131,115 @@ fn pad_uid(uid: &str) -> Vec<u8> {
     }
     bytes
 }
+
+// ============================================================
+// SEND A C-STORE REQUEST
+// ============================================================
+//
+// Full exchange:
+//
+//   SCU (us)                         SCP (Orthanc)
+//     |                                   |
+//     |--- A-ASSOCIATE-RQ --------------> |  negotiate CT Image Storage
+//     | <-- A-ASSOCIATE-AC ------------- |  accepted
+//     |                                   |
+//     |--- P-DATA (C-STORE-RQ) ---------> |  command set
+//     |--- P-DATA (dataset) -----------> |  the actual image bytes
+//     | <-- P-DATA (C-STORE-RSP) ------- |  Status = 0x0000 (Success)
+//     |                                   |
+//     |--- A-RELEASE-RQ ----------------> |
+//     | <-- A-RELEASE-RP --------------- |
+//
+pub fn send_store(
+    host: &str,
+    port: u16,
+    calling_aet: &str,
+    called_aet: &str,
+    file_path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // --- BLOCK 1 : Read the DICOM file ---
+    //
+    // We need the SOP Class and Instance UIDs before opening the association,
+    // because they define the Presentation Context to negotiate.
+    //
+    let (sop_class, sop_instance) = read_dicom_info(file_path)?;
+
+    // Instead of slicing raw bytes (fragile, offset-dependent),
+    // we use dicom-object to re-encode the dataset cleanly into a buffer.
+    // write_dataset_to() serializes only the dataset (no preamble, no file meta),
+    // which is exactly what the DICOM network protocol expects.
+    let obj = open_file(file_path)?;
+    let mut dataset_bytes: Vec<u8> = Vec::new();
+    obj.write_dataset(&mut dataset_bytes)?;
+
+    println!("[C-STORE] Dataset size : {} bytes", dataset_bytes.len());
+
+    // --- BLOCK 2 : Establish the DICOM Association ---
+    let addr = format!("{}:{}", host, port);
+    println!("[C-STORE] Connecting to {}...", addr);
+
+    let mut association = ClientAssociationOptions::new()
+        .calling_ae_title(calling_aet)
+        .called_ae_title(called_aet)
+        .with_presentation_context(
+            &sop_class,                        // Abstract Syntax : SOP Class of our image
+            vec![&EXPLICIT_VR_LE.to_string()], // Transfer Syntax
+        )
+        .establish(&addr)?;
+
+    println!("[C-STORE] DICOM association established ✓");
+
+    let pc_id = association.presentation_contexts()[0].id;
+
+    // --- BLOCK 3 : Send the C-STORE-RQ command set ---
+    //
+    // The command set tells the server what we are about to send:
+    // the SOP Class, the SOP Instance UID, and that a dataset follows.
+    //
+    let cmd_bytes = build_c_store_rq(1, &sop_class, &sop_instance);
+
+    association.send(&Pdu::PData {
+        data: vec![PDataValue {
+            presentation_context_id: pc_id,
+            value_type: PDataValueType::Command,
+            is_last: true,
+            data: cmd_bytes,
+        }],
+    })?;
+    println!("[C-STORE] C-STORE-RQ command sent");
+
+    // --- BLOCK 4 : Send the dataset (the actual image) ---
+    //
+    // send_pdata() returns a writer that automatically splits data into
+    // PDU fragments if it exceeds the negotiated max PDU size.
+    // The writer is flushed and finalized when it goes out of scope (drop).
+    //
+    {
+        let mut writer = association.send_pdata(pc_id);
+        writer.write_all(&dataset_bytes)?;
+    } // writer dropped here → final P-DATA fragment is sent
+    println!("[C-STORE] Dataset sent");
+
+    // --- BLOCK 5 : Read the C-STORE-RSP ---
+    //
+    // Orthanc should respond with a P-DATA containing the C-STORE-RSP
+    // command set, with Status = 0x0000 (Success).
+    //
+    match association.receive()? {
+        Pdu::PData { data } => {
+            println!(
+                "[C-STORE] Response received ({} bytes) ✓",
+                data[0].data.len()
+            );
+        }
+        pdu => {
+            println!("[C-STORE] Unexpected PDU: {:?}", pdu);
+        }
+    }
+
+    // --- BLOCK 6 : Release the association ---
+    association.release()?;
+    println!("[C-STORE] Association released ✓");
+
+    Ok(())
+}

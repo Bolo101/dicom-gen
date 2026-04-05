@@ -1,7 +1,8 @@
 mod cli;
 mod echo;
 mod inspect;
-#[allow(unused)]
+mod store;
+
 #[tokio::main]
 async fn main() {
     use clap::Parser;
@@ -9,15 +10,16 @@ async fn main() {
 
     let args = cli::Cli::parse();
 
-    // --- Inspect mode ---
+    // --- Inspect mode (early return, no header) ---
     if args.inspect {
         match &args.file {
             Some(path) => inspect::inspect_file(path),
             None => println!("[INSPECT] Error: please provide a file with --file <path>"),
         }
-        return; // stop here, don't send any DICOM command
+        return;
     }
 
+    // --- Header ---
     println!("=== DICOM-GEN ===");
     println!("Mode     : {:?}", args.mode);
     println!("Host     : {}:{}", args.host, args.port);
@@ -31,7 +33,7 @@ async fn main() {
 
     println!("---");
 
-    // Dispatch to the right handler based on command and transport mode
+    // --- Command dispatch ---
     match (&args.command, &args.mode) {
         (DicomCommand::Echo, TransportMode::Tcp) => {
             match echo::send_echo(&args.host, args.port, &args.calling_aet, &args.called_aet) {
@@ -39,7 +41,23 @@ async fn main() {
                 Err(e) => println!("[C-ECHO] Failed : {}", e),
             }
         }
-        // Other commands will be implemented in upcoming steps
+
+        (DicomCommand::Store, TransportMode::Tcp) => match &args.file {
+            Some(path) => {
+                match store::send_store(
+                    &args.host,
+                    args.port,
+                    &args.calling_aet,
+                    &args.called_aet,
+                    path,
+                ) {
+                    Ok(()) => println!("[C-STORE] Success ✓"),
+                    Err(e) => println!("[C-STORE] Failed : {}", e),
+                }
+            }
+            None => println!("[C-STORE] Error: please provide a file with --file <path>"),
+        },
+
         _ => {
             println!("Command not yet implemented.");
         }
