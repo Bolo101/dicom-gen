@@ -160,12 +160,17 @@ fn pad_uid(uid: &str) -> Vec<u8> {
 //     |--- A-RELEASE-RQ ----------------> |
 //     | <-- A-RELEASE-RP --------------- |
 //
+// Note: dicom-ul 0.7.1 does not support pre-bound TcpStream injection.
+// Interface binding via --local_ip is reserved for a future dicom-ul version.
+// The OS will select the outgoing interface automatically for now.
+//
 pub fn send_store(
     host: &str,
     port: u16,
     calling_aet: &str,
     called_aet: &str,
     file_path: &str,
+    _net_config: &crate::network::NetworkConfig, // reserved for future interface binding
 ) -> Result<(), Box<dyn std::error::Error>> {
     // --- BLOCK 1 : Read the DICOM file ---
     let (sop_class, sop_instance, transfer_syntax) = read_dicom_info(file_path)?;
@@ -180,7 +185,7 @@ pub fn send_store(
     // A DICOM file is structured as:
     //   128 bytes  → preamble (ignored)
     //   4 bytes    → "DICM" magic signature
-    //   12 bytes   → tag (0002,0000) + length + value  (the group length element)
+    //   12 bytes   → tag (0002,0000) + length + value (the group length element)
     //   N bytes    → rest of File Meta Information
     //   ...        → dataset starts here
     //

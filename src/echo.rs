@@ -1,6 +1,5 @@
 use dicom_ul::association::client::ClientAssociationOptions;
 use dicom_ul::pdu::{PDataValue, PDataValueType, Pdu};
-use std::net::TcpStream;
 
 // ============================================================
 // CONSTANTS
@@ -51,8 +50,6 @@ fn build_c_echo_rq(message_id: u16) -> Vec<u8> {
         (4 + 4 + 2) +                      // (0000,0110) Message ID     :  2 bytes value
         (4 + 4 + 2); // (0000,0800) Data Set Type  :  2 bytes value
 
-    // We build the raw bytes of the command set manually.
-    // Vec<u8> is a growable array of bytes in Rust.
     let mut data: Vec<u8> = Vec::new();
 
     // --- Element (0000,0000) : Command Group Length ---
@@ -110,39 +107,48 @@ fn build_c_echo_rq(message_id: u16) -> Vec<u8> {
 //     |--- A-RELEASE-RQ --------------> |  "I'm done"
 //     | <-- A-RELEASE-RP -------------- |  "Goodbye"
 //
-// The function returns Ok(()) on success, or an error if anything fails.
-// Box<dyn std::error::Error> means "any kind of error" — convenient when
-// combining errors from multiple crates (network, DICOM, IO...).
+// Parameters:
+//   count       → number of C-ECHO requests to send
+//   interval_ms → delay between requests in milliseconds (0 = no delay)
+//   net_config  → network configuration (TTL, local IP binding)
+//
+// Note: dicom-ul 0.7.1 does not support pre-bound TcpStream injection.
+// Interface binding via --local_ip is reserved for a future dicom-ul version.
+// The OS will select the outgoing interface automatically for now.
 //
 pub fn send_echo(
     host: &str,
     port: u16,
     calling_aet: &str,
     called_aet: &str,
-    count: u32, // number of C-ECHO requests to send
+    count: u32,
+    interval_ms: u64,
+    _net_config: &crate::network::NetworkConfig, // reserved for future interface binding
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("{}:{}", host, port);
 
     for i in 1..=count {
         if count > 1 {
-            println!("[C-ECHO] Request #{}", i);
+            println!("[C-ECHO] Request #{}/{}", i, count);
         }
         println!("[C-ECHO] Connecting to {}...", addr);
 
-        // Each C-ECHO opens its own association — this is the standard
-        // DICOM behaviour. One association per request.
         let ts = EXPLICIT_VR_LE.to_string();
 
-        let options = ClientAssociationOptions::new()
+        // Each C-ECHO opens its own association — standard DICOM behaviour.
+        // One association per request ensures clean state between requests.
+        let mut association = ClientAssociationOptions::new()
             .calling_ae_title(calling_aet)
             .called_ae_title(called_aet)
-            .with_presentation_context(VERIFICATION_SOP_CLASS, vec![&ts]);
+            .with_presentation_context(VERIFICATION_SOP_CLASS, vec![&ts])
+            .establish(&addr)?;
 
-        let mut association = options.establish(&addr)?;
         println!("[C-ECHO] DICOM association established ✓");
 
         let pc_id = association.presentation_contexts()[0].id;
-        let cmd_bytes = build_c_echo_rq(i as u16); // use loop index as message ID
+
+        // Use the loop index as message ID so each request is uniquely identified
+        let cmd_bytes = build_c_echo_rq(i as u16);
 
         association.send(&Pdu::PData {
             data: vec![PDataValue {
@@ -168,6 +174,12 @@ pub fn send_echo(
 
         association.release()?;
         println!("[C-ECHO] Association released ✓");
+
+        // Wait between requests if interval is set and this is not the last one
+        if interval_ms > 0 && i < count {
+            println!("[C-ECHO] Waiting {}ms before next request...", interval_ms);
+            std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+        }
     }
 
     Ok(())

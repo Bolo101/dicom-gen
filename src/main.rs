@@ -53,13 +53,14 @@ async fn main() {
                 &args.calling_aet,
                 &args.called_aet,
                 args.count,
+                args.interval,
+                &net_config,
             ) {
                 Ok(()) => println!("[C-ECHO] Success ✓"),
                 Err(e) => println!("[C-ECHO] Failed : {}", e),
             }
         }
 
-        // TCP C-STORE
         (DicomCommand::Store, TransportMode::Tcp) => match &args.file {
             Some(path) => {
                 match store::send_store(
@@ -68,12 +69,13 @@ async fn main() {
                     &args.calling_aet,
                     &args.called_aet,
                     path,
+                    &net_config,
                 ) {
                     Ok(()) => println!("[C-STORE] Success ✓"),
                     Err(e) => println!("[C-STORE] Failed : {}", e),
                 }
             }
-            None => println!("[C-STORE] Error: please provide a file with --file "),
+            None => println!("[C-STORE] Error: please provide a file with --file <path>"),
         },
 
         // UDP mode — raw packets with TTL control, no DICOM handshake

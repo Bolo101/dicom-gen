@@ -11,9 +11,11 @@ use std::time::Duration;
 // provides natively: interface binding and TTL control.
 //
 pub struct NetworkConfig {
-    pub local_ip: Option<String>, // bind to this local IP before connecting
-    pub ttl: u8,                  // TTL value for UDP mode
-    pub timeout_secs: u64,        // connection timeout in seconds
+    pub local_ip: Option<String>,
+    pub ttl: u8,
+    // Reserved for future use when dicom-ul supports connection timeouts
+    #[allow(dead_code)]
+    pub timeout_secs: u64,
 }
 
 impl NetworkConfig {
@@ -43,6 +45,7 @@ impl NetworkConfig {
 //   5. Connect to the remote address
 //   6. Convert to std::net::TcpStream for use with dicom-ul
 //
+#[allow(dead_code)]
 pub fn create_tcp_stream(
     remote_host: &str,
     remote_port: u16,
