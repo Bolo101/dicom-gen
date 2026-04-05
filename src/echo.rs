@@ -1,5 +1,6 @@
 use dicom_ul::association::client::ClientAssociationOptions;
 use dicom_ul::pdu::{PDataValue, PDataValueType, Pdu};
+use std::net::TcpStream;
 
 // ============================================================
 // CONSTANTS
@@ -116,8 +117,8 @@ fn build_c_echo_rq(message_id: u16) -> Vec<u8> {
 pub fn send_echo(
     host: &str,
     port: u16,
-    calling_aet: &str, // our DICOM name (e.g. "DICOM-GEN")
-    called_aet: &str,  // the server's DICOM name (e.g. "ORTHANC")
+    calling_aet: &str,
+    called_aet: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let addr = format!("{}:{}", host, port);
     println!("[C-ECHO] Connecting to {}...", addr);
@@ -130,18 +131,22 @@ pub fn send_echo(
     // A-ASSOCIATE-RQ / A-ASSOCIATE-AC handshake automatically.
     //
     // A Presentation Context declares:
-    //   - what we want to do (Abstract Syntax = SOP Class UID)
-    //   - how we encode it  (Transfer Syntax)
+    // - what we want to do (Abstract Syntax = SOP Class UID)
+    // - how we encode it (Transfer Syntax)
     //
-    let mut association = ClientAssociationOptions::new()
+    let ts = EXPLICIT_VR_LE.to_string();
+
+    let association = ClientAssociationOptions::new()
         .calling_ae_title(calling_aet)
         .called_ae_title(called_aet)
         .with_presentation_context(
             VERIFICATION_SOP_CLASS, // Abstract Syntax : Verification (C-ECHO)
-            vec![EXPLICIT_VR_LE],   // Transfer Syntax : Explicit VR Little Endian
-        )
-        .establish(&addr)?; // The ? operator propagates any error up to the caller
+            vec![&ts],              // Transfer Syntax : Explicit VR Little Endian
+        );
 
+    // dicom-ul 0.7.1 expects an AE address (&str) here,
+    // so we let dicom-ul open the TCP connection itself.
+    let mut association = association.establish(&addr)?;
     println!("[C-ECHO] DICOM association established ✓");
 
     // --- BLOCK 2 : Send the C-ECHO-RQ ---
@@ -158,10 +163,10 @@ pub fn send_echo(
 
     // Wrap the command bytes in a P-DATA PDU and send it.
     // PDataValue describes one fragment of data:
-    //   - presentation_context_id : links this data to our negotiated service
-    //   - value_type              : Command (vs Dataset)
-    //   - is_last                 : true = this is the last (and only) fragment
-    //   - data                    : the raw command set bytes
+    // - presentation_context_id : links this data to our negotiated service
+    // - value_type : Command (vs Dataset)
+    // - is_last : true = this is the last (and only) fragment
+    // - data : the raw command set bytes
     //
     association.send(&Pdu::PData {
         data: vec![PDataValue {

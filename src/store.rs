@@ -2,6 +2,7 @@ use dicom_object::open_file;
 use dicom_ul::association::client::ClientAssociationOptions;
 use dicom_ul::pdu::{PDataValue, PDataValueType, Pdu};
 use std::io::Write;
+use std::net::TcpStream;
 
 // Transfer Syntax: Explicit VR Little Endian
 // The most widely supported encoding in modern DICOM implementations
@@ -166,7 +167,7 @@ pub fn send_store(
 
     // Instead of slicing raw bytes (fragile, offset-dependent),
     // we use dicom-object to re-encode the dataset cleanly into a buffer.
-    // write_dataset_to() serializes only the dataset (no preamble, no file meta),
+    // write_dataset() serializes only the dataset (no preamble, no file meta),
     // which is exactly what the DICOM network protocol expects.
     let obj = open_file(file_path)?;
     let mut dataset_bytes: Vec<u8> = Vec::new();
@@ -178,15 +179,19 @@ pub fn send_store(
     let addr = format!("{}:{}", host, port);
     println!("[C-STORE] Connecting to {}...", addr);
 
-    let mut association = ClientAssociationOptions::new()
+    let ts = EXPLICIT_VR_LE.to_string();
+
+    let association = ClientAssociationOptions::new()
         .calling_ae_title(calling_aet)
         .called_ae_title(called_aet)
         .with_presentation_context(
-            &sop_class,                        // Abstract Syntax : SOP Class of our image
-            vec![&EXPLICIT_VR_LE.to_string()], // Transfer Syntax
-        )
-        .establish(&addr)?;
+            &sop_class, // Abstract Syntax : SOP Class of our image
+            vec![&ts],  // Transfer Syntax
+        );
 
+    // dicom-ul 0.7.1 expects an AE address (&str) here,
+    // so we let dicom-ul open the TCP connection itself.
+    let mut association = association.establish(&addr)?;
     println!("[C-STORE] DICOM association established ✓");
 
     let pc_id = association.presentation_contexts()[0].id;
