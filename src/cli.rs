@@ -58,4 +58,16 @@ pub struct Cli {
     /// Inspect a DICOM file and print its metadata
     #[arg(long, default_value_t = false)]
     pub inspect: bool,
+
+    /// Local IP address to bind to (optional, e.g. "192.168.1.10")
+    #[arg(long)]
+    pub local_ip: Option<String>,
+
+    /// Number of UDP packets to send (UDP mode only)
+    #[arg(long, default_value_t = 1)]
+    pub count: u32,
+
+    /// Delay between UDP packets in milliseconds (UDP mode only)
+    #[arg(long, default_value_t = 1000)]
+    pub interval: u64,
 }
