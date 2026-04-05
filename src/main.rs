@@ -9,6 +9,15 @@ async fn main() {
 
     let args = cli::Cli::parse();
 
+    // --- Inspect mode ---
+    if args.inspect {
+        match &args.file {
+            Some(path) => inspect::inspect_file(path),
+            None => println!("[INSPECT] Error: please provide a file with --file <path>"),
+        }
+        return; // stop here, don't send any DICOM command
+    }
+
     println!("=== DICOM-GEN ===");
     println!("Mode     : {:?}", args.mode);
     println!("Host     : {}:{}", args.host, args.port);

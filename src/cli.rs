@@ -50,4 +50,12 @@ pub struct Cli {
     /// TTL for UDP mode (ignored in TCP mode)
     #[arg(long, default_value_t = 64)]
     pub ttl: u8,
+
+    /// Path to a DICOM file (used with --inspect or --command store)
+    #[arg(long)]
+    pub file: Option<String>,
+
+    /// Inspect a DICOM file and print its metadata
+    #[arg(long, default_value_t = false)]
+    pub inspect: bool,
 }
