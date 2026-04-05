@@ -2,18 +2,20 @@ use dicom_object::open_file;
 use dicom_ul::association::client::ClientAssociationOptions;
 use dicom_ul::pdu::{PDataValue, PDataValueType, Pdu};
 use std::io::Write;
-use std::net::TcpStream;
 
-// Transfer Syntax: Explicit VR Little Endian
-// The most widely supported encoding in modern DICOM implementations
+// ============================================================
+// CONSTANTS
+// ============================================================
+
+// Fallback Transfer Syntax: Explicit VR Little Endian
+// Used only if the file's Transfer Syntax cannot be determined
 const EXPLICIT_VR_LE: &str = "1.2.840.10008.1.2.1";
 
 // ============================================================
-// READ SOP CLASS AND INSTANCE UID FROM A DICOM FILE
+// READ SOP CLASS, INSTANCE UID AND TRANSFER SYNTAX FROM A DICOM FILE
 // ============================================================
 //
-// Before opening an association, we need two pieces of information
-// from the file itself:
+// Before opening an association, we need three pieces of information:
 //
 //   SOP Class UID    → identifies the type of data (CT, MR, X-Ray...)
 //                      used to negotiate the Presentation Context
@@ -21,29 +23,38 @@ const EXPLICIT_VR_LE: &str = "1.2.840.10008.1.2.1";
 //   SOP Instance UID → unique identifier for this specific image
 //                      included in the C-STORE-RQ command set
 //
-// Both are returned as a tuple (sop_class, sop_instance).
+//   Transfer Syntax  → how the dataset is encoded (uncompressed, JPEG, etc.)
+//                      must match what we negotiate in the association,
+//                      otherwise the server will abort the connection
 //
-fn read_dicom_info(path: &str) -> Result<(String, String), Box<dyn std::error::Error>> {
+// All three are returned as a tuple.
+//
+fn read_dicom_info(path: &str) -> Result<(String, String, String), Box<dyn std::error::Error>> {
     let obj = open_file(path)?;
 
-    // Read the SOP Class UID from the DICOM file metadata
+    // Read the SOP Class UID from the dataset
     let sop_class = obj
         .element_by_name("SOPClassUID")?
         .to_str()?
         .trim()
         .to_string();
 
-    // Read the SOP Instance UID from the DICOM file metadata
+    // Read the SOP Instance UID from the dataset
     let sop_instance = obj
         .element_by_name("SOPInstanceUID")?
         .to_str()?
         .trim()
         .to_string();
 
-    println!("[C-STORE] SOP Class    : {}", sop_class);
-    println!("[C-STORE] SOP Instance : {}", sop_instance);
+    // Read the Transfer Syntax from the File Meta Information (group 0002)
+    // This tells us how the pixel data is encoded in the file
+    let transfer_syntax = obj.meta().transfer_syntax().to_string();
 
-    Ok((sop_class, sop_instance))
+    println!("[C-STORE] SOP Class       : {}", sop_class);
+    println!("[C-STORE] SOP Instance    : {}", sop_instance);
+    println!("[C-STORE] Transfer Syntax : {}", transfer_syntax);
+
+    Ok((sop_class, sop_instance, transfer_syntax))
 }
 
 // ============================================================
@@ -64,8 +75,6 @@ fn read_dicom_info(path: &str) -> Result<(String, String), Box<dyn std::error::E
 //   (0000,0800) is 0x0102 instead of 0x0101 → tells the server a dataset follows
 //
 fn build_c_store_rq(message_id: u16, sop_class: &str, sop_instance: &str) -> Vec<u8> {
-    // DICOM requires UI values to have an even byte length
-    // We pad with \0 if the length is odd
     let sop_class_bytes = pad_uid(sop_class);
     let sop_instance_bytes = pad_uid(sop_instance);
 
@@ -141,11 +150,11 @@ fn pad_uid(uid: &str) -> Vec<u8> {
 //
 //   SCU (us)                         SCP (Orthanc)
 //     |                                   |
-//     |--- A-ASSOCIATE-RQ --------------> |  negotiate CT Image Storage
+//     |--- A-ASSOCIATE-RQ --------------> |  negotiate using file's Transfer Syntax
 //     | <-- A-ASSOCIATE-AC ------------- |  accepted
 //     |                                   |
 //     |--- P-DATA (C-STORE-RQ) ---------> |  command set
-//     |--- P-DATA (dataset) -----------> |  the actual image bytes
+//     |--- P-DATA (dataset) -----------> |  the actual image bytes (as-is from file)
 //     | <-- P-DATA (C-STORE-RSP) ------- |  Status = 0x0000 (Success)
 //     |                                   |
 //     |--- A-RELEASE-RQ ----------------> |
@@ -159,39 +168,56 @@ pub fn send_store(
     file_path: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // --- BLOCK 1 : Read the DICOM file ---
-    //
-    // We need the SOP Class and Instance UIDs before opening the association,
-    // because they define the Presentation Context to negotiate.
-    //
-    let (sop_class, sop_instance) = read_dicom_info(file_path)?;
+    let (sop_class, sop_instance, transfer_syntax) = read_dicom_info(file_path)?;
 
-    // Instead of slicing raw bytes (fragile, offset-dependent),
-    // we use dicom-object to re-encode the dataset cleanly into a buffer.
-    // write_dataset() serializes only the dataset (no preamble, no file meta),
-    // which is exactly what the DICOM network protocol expects.
+    // Read the raw file bytes.
+    // We send the dataset as-is from the file to preserve the original
+    // encoding — especially important for compressed Transfer Syntaxes
+    // (JPEG, JPEG2000, RLE...) where re-encoding would corrupt the data.
+    let file_bytes = std::fs::read(file_path)?;
+
+    // Skip the File Meta Information to get to the actual dataset.
+    // A DICOM file is structured as:
+    //   128 bytes  → preamble (ignored)
+    //   4 bytes    → "DICM" magic signature
+    //   12 bytes   → tag (0002,0000) + length + value  (the group length element)
+    //   N bytes    → rest of File Meta Information
+    //   ...        → dataset starts here
+    //
+    // information_group_length gives us N (the size of the meta after the group length element)
     let obj = open_file(file_path)?;
-    let mut dataset_bytes: Vec<u8> = Vec::new();
-    obj.write_dataset(&mut dataset_bytes)?;
+    let meta_len = obj.meta().information_group_length as usize;
+    let dataset_start = 128 + 4 + 12 + meta_len;
+    let dataset_bytes = &file_bytes[dataset_start..];
 
+    println!("[C-STORE] File size    : {} bytes", file_bytes.len());
     println!("[C-STORE] Dataset size : {} bytes", dataset_bytes.len());
 
     // --- BLOCK 2 : Establish the DICOM Association ---
+    //
+    // We negotiate using the file's actual Transfer Syntax.
+    // If we negotiated Explicit VR Little Endian but the file is JPEG-compressed,
+    // Orthanc would receive incompatible data and abort the connection.
+    //
     let addr = format!("{}:{}", host, port);
     println!("[C-STORE] Connecting to {}...", addr);
 
-    let ts = EXPLICIT_VR_LE.to_string();
+    // Use the file's Transfer Syntax, fall back to Explicit VR LE if empty
+    let ts = if transfer_syntax.is_empty() {
+        EXPLICIT_VR_LE.to_string()
+    } else {
+        transfer_syntax.clone()
+    };
 
-    let association = ClientAssociationOptions::new()
+    let mut association = ClientAssociationOptions::new()
         .calling_ae_title(calling_aet)
         .called_ae_title(called_aet)
         .with_presentation_context(
             &sop_class, // Abstract Syntax : SOP Class of our image
-            vec![&ts],  // Transfer Syntax
-        );
+            vec![&ts],  // Transfer Syntax : from the file itself
+        )
+        .establish(&addr)?;
 
-    // dicom-ul 0.7.1 expects an AE address (&str) here,
-    // so we let dicom-ul open the TCP connection itself.
-    let mut association = association.establish(&addr)?;
     println!("[C-STORE] DICOM association established ✓");
 
     let pc_id = association.presentation_contexts()[0].id;
@@ -221,13 +247,13 @@ pub fn send_store(
     //
     {
         let mut writer = association.send_pdata(pc_id);
-        writer.write_all(&dataset_bytes)?;
+        writer.write_all(dataset_bytes)?;
     } // writer dropped here → final P-DATA fragment is sent
     println!("[C-STORE] Dataset sent");
 
     // --- BLOCK 5 : Read the C-STORE-RSP ---
     //
-    // Orthanc should respond with a P-DATA containing the C-STORE-RSP
+    // Orthanc responds with a P-DATA containing the C-STORE-RSP
     // command set, with Status = 0x0000 (Success).
     //
     match association.receive()? {
