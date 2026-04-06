@@ -4,9 +4,6 @@ A DICOM traffic generator written in Rust, designed for debugging and developing
 
 Supports **C-ECHO** (ping) and **C-STORE** (image transfer) over TCP, and raw **UDP** packet generation with TTL control.
 
-## Status
-
-🚧 Work in progress — core features working
 
 ## Features
 
@@ -42,7 +39,7 @@ cargo --version
 ### 2 — Clone and build
 
 ```bash
-git clone https://github.com/<YOUR_USERNAME>/dicom-gen.git
+git clone https://github.com/Bolo101/dicom-gen.git
 cd dicom-gen
 cargo build --release
 ```
@@ -52,6 +49,7 @@ The binary will be available at `target/release/dicom-gen`.
 ### 3 — Install Orthanc (optional, for local testing)
 
 Orthanc is an open-source DICOM server (SCP) used to test C-ECHO and C-STORE.
+You can install Orthanc on a remote host, or directly on dicom-gen running machine to work on localhost 
 
 ```bash
 sudo apt update
